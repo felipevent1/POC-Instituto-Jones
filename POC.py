@@ -4,6 +4,7 @@ import requests
 from io import StringIO, BytesIO
 from datetime import datetime
 import numpy as np
+import re
 
 # --- CONFIGURAÇÕES E FUNÇÕES ---
 
@@ -18,7 +19,7 @@ st.set_page_config(
 st.title("📊 Dashboard de Investimentos ES")
 st.markdown("---")
 
-@st.cache_data(ttl=3600) # Cache por 1 hora
+@st.cache_data(ttl=3600)  # Cache por 1 hora
 def carregar_dados_google_sheets():
     """
     Carrega dados do Google Sheets usando o file ID
@@ -34,20 +35,19 @@ def carregar_dados_google_sheets():
         response = requests.get(url)
         response.raise_for_status()
         
-        # Tentar diferentes encodings
+        # Tentar ler com diferentes encodings
         encodings = ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252']
         
         for encoding in encodings:
             try:
                 # Ler os dados com encoding específico
-                # Usando BytesIO para melhor manipulação de encoding
-                dados = pd.read_csv(BytesIO(response.content), encoding=encoding)
+                dados = pd.read_csv(StringIO(response.text), encoding=encoding)
                 return dados
             except UnicodeDecodeError:
                 continue
         
         # Se nenhum encoding funcionar
-        dados = pd.read_csv(BytesIO(response.content), encoding='utf-8', errors='replace')
+        dados = pd.read_csv(StringIO(response.text), encoding='utf-8', errors='replace')
         return dados
         
     except Exception as e:
@@ -67,11 +67,11 @@ def corrigir_caracteres_ptbr(texto):
     correcoes = {
         'Ã¡': 'á', 'Ã©': 'é', 'Ã­': 'í', 'Ã³': 'ó', 'Ãº': 'ú',
         'Ã£': 'ã', 'Ãµ': 'õ', 'Ã§': 'ç',
-        'Ã€': 'À', 'Ã‰': 'É', 'Ã': 'Í', 'Ã“': 'Ó', 'Ãš': 'Ú',
+        'Ã€': 'À', 'Ã‰': 'É', 'Ã': 'Í', 'Ã“': 'Ó', 'Ãš': 'Ú',
         'Ãƒ': 'Ã', 'Ã•': 'Õ', 'Ã‡': 'Ç',
         'Ã¢': 'â', 'Ãª': 'ê', 'Ã®': 'î', 'Ã´': 'ô', 'Ã»': 'û',
         'Ã¤': 'ä', 'Ã«': 'ë', 'Ã¯': 'ï', 'Ã¶': 'ö', 'Ã¼': 'ü',
-        'Ã±': 'ñ', 'Ã': 'Á', 'Ã‰': 'É', 'Ã': 'Í', 'Ã“': 'Ó', 'Ãš': 'Ú',
+        'Ã±': 'ñ', 'Ã': 'Á', 'Ã‰': 'É', 'Ã': 'Í', 'Ã“': 'Ó', 'Ãš': 'Ú',
         'Ã§': 'ç', 'Ã£': 'ã', 'Ãµ': 'õ'
     }
     
@@ -80,38 +80,59 @@ def corrigir_caracteres_ptbr(texto):
     
     return texto_str
 
-def converter_coluna_numerica(coluna):
+def converter_valor_investimento(valor):
     """
-    Converte uma coluna para numérico, tratando strings com formato de moeda
+    Converte um valor de investimento para numérico, tratando formatos brasileiros
     """
-    # Se já for numérico, retornar como está
-    if pd.api.types.is_numeric_dtype(coluna):
-        return coluna
+    if pd.isna(valor):
+        return np.nan
     
-    coluna_limpa = coluna.astype(str)
+    valor_str = str(valor)
     
-    # Remover caracteres não numéricos exceto pontos, vírgulas e hífen
-    coluna_limpa = coluna_limpa.str.replace('R\$', '', regex=False)
-    coluna_limpa = coluna_limpa.str.replace('USD', '', regex=False)
-    coluna_limpa = coluna_limpa.str.replace('€', '', regex=False)
-    coluna_limpa = coluna_limpa.str.replace(' ', '', regex=False)
-    coluna_limpa = coluna_limpa.str.replace('"', '', regex=False)
-    coluna_limpa = coluna_limpa.str.replace("'", "", regex=False)
+    # Remover "R$", espaços e caracteres especiais
+    valor_str = re.sub(r'[R\$€USD\s\"\']', '', valor_str)
     
-    # Verificar se o formato é brasileiro (vírgula como decimal)
-    tem_virgula = coluna_limpa.str.contains(',').any()
-    tem_ponto_milhar = coluna_limpa.str.contains(r'\.\d{3},').any()
+    # Verificar se é vazio após limpeza
+    if valor_str == '' or valor_str.lower() == 'nan':
+        return np.nan
     
-    if tem_virgula and tem_ponto_milhar:
-        # Formato brasileiro: 1.000,00 -> remover pontos e converter vírgula para ponto
-        coluna_limpa = coluna_limpa.str.replace('.', '', regex=False)
-        coluna_limpa = coluna_limpa.str.replace(',', '.', regex=False)
-    elif tem_virgula and not tem_ponto_milhar:
-        # Formato europeu: 1000,00 -> converter vírgula para ponto
-        coluna_limpa = coluna_limpa.str.replace(',', '.', regex=False)
+    # Detectar formato brasileiro (1.000,00) ou internacional (1,000.00)
+    if '.' in valor_str and ',' in valor_str:
+        # Verificar qual é o separador decimal
+        if valor_str.rfind('.') > valor_str.rfind(','):
+            # Formato 1,000.00 (internacional)
+            valor_str = valor_str.replace(',', '')
+        else:
+            # Formato 1.000,00 (brasileiro)
+            valor_str = valor_str.replace('.', '')
+            valor_str = valor_str.replace(',', '.')
+    elif ',' in valor_str:
+        # Formato 1000,00 (europeu/brasileiro sem separador de milhar)
+        valor_str = valor_str.replace(',', '.')
     
-    # Converter para numérico
-    return pd.to_numeric(coluna_limpa, errors='coerce')
+    # Remover qualquer caractere não numérico (exceto ponto e sinal negativo)
+    valor_str = re.sub(r'[^\d\.\-]', '', valor_str)
+    
+    # Verificar se tem múltiplos pontos (erro comum)
+    if valor_str.count('.') > 1:
+        # Manter apenas o último ponto como decimal
+        partes = valor_str.split('.')
+        parte_inteira = ''.join(partes[:-1])
+        parte_decimal = partes[-1]
+        valor_str = f"{parte_inteira}.{parte_decimal}"
+    
+    try:
+        # Tentar converter para float
+        return float(valor_str)
+    except:
+        return np.nan
+
+def converter_coluna_investimento(coluna):
+    """
+    Converte a coluna de investimento para numérico
+    """
+    # Aplicar conversão a cada valor
+    return coluna.apply(converter_valor_investimento)
 
 def to_excel(df):
     """Converte DataFrame para Excel"""
@@ -140,23 +161,26 @@ for coluna in dados.columns:
 colunas_investimento = [col for col in dados.columns if 'invest' in col.lower()]
 if colunas_investimento:
     coluna_investimento = colunas_investimento[0]
+
     # Converter a coluna
-    dados[coluna_investimento] = converter_coluna_numerica(dados[coluna_investimento])
+    dados[coluna_investimento] = converter_coluna_investimento(dados[coluna_investimento])
 else:
     coluna_investimento = None
+    st.sidebar.write("⚠️ Nenhuma coluna de investimento encontrada")
 
 # Identificar coluna de data automaticamente
 colunas_data = [col for col in dados.columns if 'data' in col.lower() or 'date' in col.lower()]
 if colunas_data:
     coluna_data = colunas_data[0]
+    
     # Converter para datetime se possível
     if not pd.api.types.is_datetime64_any_dtype(dados[coluna_data]):
         dados[coluna_data] = pd.to_datetime(dados[coluna_data], errors='coerce')
-    dados = dados.dropna(subset=[coluna_data]) # Remover linhas sem data válida
+    # Remover linhas sem data válida
+    dados = dados.dropna(subset=[coluna_data])
 else:
     coluna_data = dados.columns[0]
-    st.error(f"Coluna de data não encontrada. Usando a coluna '{coluna_data}' para datas, mas o filtro de data pode não funcionar.")
-
+    st.sidebar.error(f"Coluna de data não encontrada. Usando a coluna '{coluna_data}' para datas.")
 
 # --- GESTÃO DE ESTADO DO FILTRO E CALLBACK ---
 
@@ -168,8 +192,12 @@ SPECIFIC_FILTERS_KEYS = 'specific_filters_keys'
 filtros_select_names = ['source', 'região', 'cidade', 'regiao', 'region', 'city']
 
 # Encontrar os valores min e max de data após o pré-processamento
-data_min = dados[coluna_data].min().date() if dados[coluna_data].notna().any() else datetime.now().date()
-data_max = dados[coluna_data].max().date() if dados[coluna_data].notna().any() else datetime.now().date()
+if dados[coluna_data].notna().any():
+    data_min = dados[coluna_data].min().date()
+    data_max = dados[coluna_data].max().date()
+else:
+    data_min = datetime.now().date()
+    data_max = datetime.now().date()
 
 # 1. Função de callback para resetar o estado dos filtros
 def reset_filtros():
@@ -209,14 +237,14 @@ if dados[coluna_data].notna().any():
         "Data inicial:",
         min_value=data_min,
         max_value=data_max,
-        key=DATE_START_KEY # Vincula o widget à chave no session state
+        key=DATE_START_KEY
     )
 
     st.sidebar.date_input(
         "Data final:",
         min_value=data_min,
         max_value=data_max,
-        key=DATE_END_KEY # Vincula o widget à chave no session state
+        key=DATE_END_KEY
     )
     
     # O filtro usará os valores atualizados do session_state
@@ -227,7 +255,6 @@ else:
     st.sidebar.error("Não foi possível processar as datas")
     data_inicio = datetime.now().date()
     data_fim = datetime.now().date()
-
 
 # Filtros específicos: source, região e cidade
 filtros_aplicados = {}
@@ -242,44 +269,40 @@ for filtro_name in filtros_select_names:
         
         filter_key = f"filter_{coluna_filtro}_key"
         
-        # 3.1 Inicializa o estado para a Selectbox (se necessário)
+        # Inicializa o estado para a Selectbox (se necessário)
         if filter_key not in st.session_state:
             st.session_state[filter_key] = 'Todos'
             
-        # 3.2 Armazena a chave para que a função reset_filtros possa acessá-la
+        # Armazena a chave para que a função reset_filtros possa acessá-la
         st.session_state[SPECIFIC_FILTERS_KEYS][coluna_filtro] = filter_key
 
-        # 3.3 Encontra o índice do valor salvo no state
-        # Certifica-se de que o valor do state está na lista de opções (pode ser "Todos")
+        # Encontra o índice do valor salvo no state
         try:
             indice_padrao = valores_unicos.index(st.session_state[filter_key])
         except ValueError:
-            # Caso o valor salvo não exista mais, volta para 'Todos'
             indice_padrao = 0
             st.session_state[filter_key] = 'Todos'
         
-        # Selectbox: O valor é lido do session_state
+        # Selectbox
         st.sidebar.selectbox(
             f"{coluna_filtro.title()}:",
             options=valores_unicos,
             index=indice_padrao,
-            key=filter_key # Vincula o widget à chave no session state
+            key=filter_key
         )
         
-        # O valor selecionado para aplicar o filtro é o valor atual do session_state
+        # O valor selecionado para aplicar o filtro
         filtros_aplicados[coluna_filtro] = st.session_state[filter_key]
 
 # Botão Limpar Filtros
 st.sidebar.markdown("---")
-# O botão chama a função reset_filtros, que atualiza o session state e força um rerun.
 st.sidebar.button(
     "🔄 Limpar Filtros", 
-    use_container_width=True, 
+    width='stretch', 
     key="btn_limpar_filtros", 
     on_click=reset_filtros
 )
 st.sidebar.markdown("---")
-
 
 # --- APLICAR FILTROS ---
 
@@ -299,6 +322,16 @@ for coluna_filtro, valor_selecionado in filtros_aplicados.items():
             dados_filtrados[coluna_filtro].astype(str) == valor_selecionado
         ]
 
+# Formatar coluna de investimento como moeda para exibição
+if coluna_investimento and coluna_investimento in dados_filtrados.columns:
+    # Criar uma cópia da coluna formatada para exibição
+    dados_filtrados_display = dados_filtrados.copy()
+    dados_filtrados_display[coluna_investimento] = dados_filtrados[coluna_investimento].apply(
+        lambda x: f"R$ {x:,.2f}" if pd.notna(x) else ""
+    )
+else:
+    dados_filtrados_display = dados_filtrados.copy()
+
 # --- LAYOUT PRINCIPAL E VISUALIZAÇÃO ---
 
 st.subheader("📈 Visão Geral")
@@ -313,7 +346,7 @@ with col1:
 with col2:
     if coluna_investimento and coluna_investimento in dados_filtrados.columns:
         total_investimento = dados_filtrados[coluna_investimento].sum()
-        if pd.notna(total_investimento) and total_investimento != 0:
+        if pd.notna(total_investimento):
             st.metric("Total Investido", f"R$ {total_investimento:,.2f}")
         else:
             st.metric("Total Investido", "R$ 0,00")
@@ -322,8 +355,10 @@ with col2:
 
 with col3:
     if coluna_investimento and coluna_investimento in dados_filtrados.columns and len(dados_filtrados) > 0:
-        media_investimentos = dados_filtrados[coluna_investimento].mean()
-        if pd.notna(media_investimentos) and media_investimentos != 0:
+        # Calcular média apenas para valores não nulos
+        valores_validos = dados_filtrados[coluna_investimento].dropna()
+        if len(valores_validos) > 0:
+            media_investimentos = valores_validos.mean()
             st.metric("Média de Investimentos", f"R$ {media_investimentos:,.2f}")
         else:
             st.metric("Média de Investimentos", "R$ 0,00")
@@ -342,9 +377,9 @@ st.markdown("---")
 st.subheader("📊 Dados Filtrados")
 
 if len(dados_filtrados) > 0:
-    # Mostrar dados em uma tabela
+    # Mostrar dados em uma tabela com a coluna de investimento formatada
     st.dataframe(
-        dados_filtrados,
+        dados_filtrados_display,
         use_container_width=True,
         height=400
     )
@@ -356,7 +391,7 @@ if len(dados_filtrados) > 0:
     col1, col2 = st.columns(2)
     
     with col1:
-        # Download como CSV
+        # Download como CSV (mantém os valores numéricos originais)
         csv = dados_filtrados.to_csv(index=False, date_format='%Y-%m-%d', encoding='utf-8')
         st.download_button(
             label="📥 Download como CSV",
@@ -366,7 +401,7 @@ if len(dados_filtrados) > 0:
         )
     
     with col2:
-        # Download como Excel
+        # Download como Excel (mantém os valores numéricos originais)
         excel_data = to_excel(dados_filtrados)
         st.download_button(
             label="📥 Download como Excel",
