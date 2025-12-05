@@ -380,7 +380,7 @@ if len(dados_filtrados) > 0:
     # Mostrar dados em uma tabela com a coluna de investimento formatada
     st.dataframe(
         dados_filtrados_display,
-        use_container_width=True,
+        width='stretch',
         height=400
     )
     
