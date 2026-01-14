@@ -1,422 +1,492 @@
 import streamlit as st
 import pandas as pd
-import requests
-from io import StringIO, BytesIO
-from datetime import datetime
-import numpy as np
-import re
+import plotly.express as px
 
-# --- CONFIGURAÇÕES E FUNÇÕES ---
-
-# Configuração da página
+# ================= CONFIGURAÇÃO =================
 st.set_page_config(
     page_title="Dashboard de Investimentos ES",
-    page_icon="📊",
-    layout="wide"
+    layout="wide",
 )
 
-# Título do app
-st.title("📊 Dashboard de Investimentos ES")
-st.markdown("---")
-
-@st.cache_data(ttl=3600)  # Cache por 1 hora
-def carregar_dados_google_sheets():
-    """
-    Carrega dados do Google Sheets usando o file ID
-    """
+# ================== CARREGAMENTO ==================
+@st.cache_data
+def carregar_dados_excel(caminho):
     try:
-        # File ID do Google Sheets
-        file_id = "10fL3n_XrPPGgSQ4DiIQm0MEvi0CLGbd_" 
-        
-        # URL para download como CSV
-        url = f'https://docs.google.com/spreadsheets/d/{file_id}/export?format=csv'
-        
-        # Fazer download do arquivo
-        response = requests.get(url)
-        response.raise_for_status()
-        
-        # Tentar ler com diferentes encodings
-        encodings = ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252']
-        
-        for encoding in encodings:
-            try:
-                # Ler os dados com encoding específico
-                dados = pd.read_csv(StringIO(response.text), encoding=encoding)
-                return dados
-            except UnicodeDecodeError:
-                continue
-        
-        # Se nenhum encoding funcionar
-        dados = pd.read_csv(StringIO(response.text), encoding='utf-8', errors='replace')
-        return dados
-        
+        df = pd.read_excel(caminho)
+        return df
     except Exception as e:
-        st.error(f"Erro ao carregar dados do Google Sheets: {e}")
-        return None
+        st.error(f"❌ Erro ao carregar arquivo: {e}")
+        st.stop()
 
-def corrigir_caracteres_ptbr(texto):
-    """
-    Corrige caracteres portugueses que foram mal decodificados
-    """
-    if pd.isna(texto):
-        return texto
-    
-    texto_str = str(texto)
-    
-    # Mapeamento de caracteres problemáticos
-    correcoes = {
-        'Ã¡': 'á', 'Ã©': 'é', 'Ã­': 'í', 'Ã³': 'ó', 'Ãº': 'ú',
-        'Ã£': 'ã', 'Ãµ': 'õ', 'Ã§': 'ç',
-        'Ã€': 'À', 'Ã‰': 'É', 'Ã': 'Í', 'Ã“': 'Ó', 'Ãš': 'Ú',
-        'Ãƒ': 'Ã', 'Ã•': 'Õ', 'Ã‡': 'Ç',
-        'Ã¢': 'â', 'Ãª': 'ê', 'Ã®': 'î', 'Ã´': 'ô', 'Ã»': 'û',
-        'Ã¤': 'ä', 'Ã«': 'ë', 'Ã¯': 'ï', 'Ã¶': 'ö', 'Ã¼': 'ü',
-        'Ã±': 'ñ', 'Ã': 'Á', 'Ã‰': 'É', 'Ã': 'Í', 'Ã“': 'Ó', 'Ãš': 'Ú',
-        'Ã§': 'ç', 'Ã£': 'ã', 'Ãµ': 'õ'
-    }
-    
-    for erro, correcao in correcoes.items():
-        texto_str = texto_str.replace(erro, correcao)
-    
-    return texto_str
+# 👉 ajuste o caminho se necessário
+CAMINHO_EXCEL = "NOTICIAS_VALORES_MONETARIOS.xlsx"
+dados = carregar_dados_excel(CAMINHO_EXCEL)
 
-def converter_valor_investimento(valor):
-    """
-    Converte um valor de investimento para numérico, tratando formatos brasileiros
-    """
-    if pd.isna(valor):
-        return np.nan
-    
-    valor_str = str(valor)
-    
-    # Remover "R$", espaços e caracteres especiais
-    valor_str = re.sub(r'[R\$€USD\s\"\']', '', valor_str)
-    
-    # Verificar se é vazio após limpeza
-    if valor_str == '' or valor_str.lower() == 'nan':
-        return np.nan
-    
-    # Detectar formato brasileiro (1.000,00) ou internacional (1,000.00)
-    if '.' in valor_str and ',' in valor_str:
-        # Verificar qual é o separador decimal
-        if valor_str.rfind('.') > valor_str.rfind(','):
-            # Formato 1,000.00 (internacional)
-            valor_str = valor_str.replace(',', '')
-        else:
-            # Formato 1.000,00 (brasileiro)
-            valor_str = valor_str.replace('.', '')
-            valor_str = valor_str.replace(',', '.')
-    elif ',' in valor_str:
-        # Formato 1000,00 (europeu/brasileiro sem separador de milhar)
-        valor_str = valor_str.replace(',', '.')
-    
-    # Remover qualquer caractere não numérico (exceto ponto e sinal negativo)
-    valor_str = re.sub(r'[^\d\.\-]', '', valor_str)
-    
-    # Verificar se tem múltiplos pontos (erro comum)
-    if valor_str.count('.') > 1:
-        # Manter apenas o último ponto como decimal
-        partes = valor_str.split('.')
-        parte_inteira = ''.join(partes[:-1])
-        parte_decimal = partes[-1]
-        valor_str = f"{parte_inteira}.{parte_decimal}"
-    
-    try:
-        # Tentar converter para float
-        return float(valor_str)
-    except:
-        return np.nan
+# ================== DETECÇÃO DE COLUNAS ==================
+# Procura coluna de data
+col_data = None
+for c in dados.columns:
+    if "data" in c.lower() or "publicacao" in c.lower():
+        col_data = c
+        break
 
-def converter_coluna_investimento(coluna):
-    """
-    Converte a coluna de investimento para numérico
-    """
-    # Aplicar conversão a cada valor
-    return coluna.apply(converter_valor_investimento)
-
-def to_excel(df):
-    """Converte DataFrame para Excel"""
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Dados')
-    processed_data = output.getvalue()
-    return processed_data
-
-# --- CARREGAMENTO E PRÉ-PROCESSAMENTO ---
-
-# Carregar dados
-with st.spinner("Carregando dados do Google Sheets..."):
-    dados = carregar_dados_google_sheets()
-
-if dados is None or dados.empty:
-    st.error("Não foi possível carregar os dados. Verifique o link do Google Sheets.")
+if col_data is None:
+    st.error("❌ Nenhuma coluna de data encontrada.")
     st.stop()
 
-# Aplicar correção de caracteres em todas as colunas de texto
-for coluna in dados.columns:
-    if dados[coluna].dtype == 'object':
-        dados[coluna] = dados[coluna].apply(corrigir_caracteres_ptbr)
+# Procura coluna de fonte
+col_fonte = None
+for c in dados.columns:
+    if "fonte" in c.lower():
+        col_fonte = c
+        break
 
-# Detectar coluna de investimento
-colunas_investimento = [col for col in dados.columns if 'invest' in col.lower()]
-if colunas_investimento:
-    coluna_investimento = colunas_investimento[0]
+# Procura coluna de valor
+colunas_possiveis_valor = ["Valores_Monetarios", "Valores", "Valor"]
+coluna_valor = None
 
-    # Converter a coluna
-    dados[coluna_investimento] = converter_coluna_investimento(dados[coluna_investimento])
-else:
-    coluna_investimento = None
-    st.sidebar.write("⚠️ Nenhuma coluna de investimento encontrada")
+for col in colunas_possiveis_valor:
+    if col in dados.columns:
+        coluna_valor = col
+        break
 
-# Identificar coluna de data automaticamente
-colunas_data = [col for col in dados.columns if 'data' in col.lower() or 'date' in col.lower()]
-if colunas_data:
-    coluna_data = colunas_data[0]
+if coluna_valor is None:
+    st.error("❌ Nenhuma coluna de valores encontrada na planilha.")
+    st.stop()
+
+# ================== TRATAMENTO DE DADOS ==================
+# TRATAMENTO DE DATAS
+dados[col_data] = pd.to_datetime(dados[col_data], errors='coerce', dayfirst=True)
+
+# TRATAMENTO DE VALORES MONETÁRIOS
+def limpar_valor_monetario(valor):
+    """Função robusta para limpar valores monetários"""
+    if pd.isna(valor):
+        return None
     
-    # Converter para datetime se possível
-    if not pd.api.types.is_datetime64_any_dtype(dados[coluna_data]):
-        dados[coluna_data] = pd.to_datetime(dados[coluna_data], errors='coerce')
-    # Remover linhas sem data válida
-    dados = dados.dropna(subset=[coluna_data])
-else:
-    coluna_data = dados.columns[0]
-    st.sidebar.error(f"Coluna de data não encontrada. Usando a coluna '{coluna_data}' para datas.")
-
-# --- GESTÃO DE ESTADO DO FILTRO E CALLBACK ---
-
-DATE_START_KEY = 'date_inicio_state'
-DATE_END_KEY = 'date_fim_state'
-SPECIFIC_FILTERS_KEYS = 'specific_filters_keys'
-
-# Filtros específicos (usados para Selectbox)
-filtros_select_names = ['source', 'região', 'cidade', 'regiao', 'region', 'city']
-
-# Encontrar os valores min e max de data após o pré-processamento
-if dados[coluna_data].notna().any():
-    data_min = dados[coluna_data].min().date()
-    data_max = dados[coluna_data].max().date()
-else:
-    data_min = datetime.now().date()
-    data_max = datetime.now().date()
-
-# 1. Função de callback para resetar o estado dos filtros
-def reset_filtros():
-    """Reseta todos os valores dos filtros no st.session_state."""
+    # Se já for numérico (int ou float)
+    if isinstance(valor, (int, float)):
+        return float(valor)
     
-    # Resetar filtros de data (usamos o valor padrão min/max)
-    st.session_state[DATE_START_KEY] = data_min
-    st.session_state[DATE_END_KEY] = data_max
+    # Converte para string
+    valor_str = str(valor).strip()
     
-    # Resetar filtros específicos (Selectboxes)
-    if SPECIFIC_FILTERS_KEYS in st.session_state:
-        for key in st.session_state[SPECIFIC_FILTERS_KEYS].values():
-            st.session_state[key] = 'Todos'
+    if valor_str == '' or valor_str.lower() in ['nan', 'none', 'null']:
+        return None
     
-# 2. Inicialização dos estados
-
-# Inicialização dos Filtros Específicos (para Selectboxes)
-if SPECIFIC_FILTERS_KEYS not in st.session_state:
-    st.session_state[SPECIFIC_FILTERS_KEYS] = {}
-
-if DATE_START_KEY not in st.session_state:
-    st.session_state[DATE_START_KEY] = data_min
-
-if DATE_END_KEY not in st.session_state:
-    st.session_state[DATE_END_KEY] = data_max
+    # Remove R$ e espaços
+    valor_str = valor_str.replace('R$', '').replace('$', '').strip()
     
-# --- SIDEBAR PARA FILTROS ---
-
-st.sidebar.title("⚙️ Filtros")
-
-# 3. Widgets de Filtro
-
-# Filtro de data
-if dados[coluna_data].notna().any():
+    # Se já estiver em formato numérico sem separadores
+    try:
+        return float(valor_str)
+    except:
+        pass
     
-    st.sidebar.date_input(
-        "Data inicial:",
-        min_value=data_min,
-        max_value=data_max,
-        key=DATE_START_KEY
-    )
-
-    st.sidebar.date_input(
-        "Data final:",
-        min_value=data_min,
-        max_value=data_max,
-        key=DATE_END_KEY
-    )
+    # Tenta identificar o formato
+    tem_ponto = '.' in valor_str
+    tem_virgula = ',' in valor_str
     
-    # O filtro usará os valores atualizados do session_state
-    data_inicio = st.session_state[DATE_START_KEY]
-    data_fim = st.session_state[DATE_END_KEY]
-    
-else:
-    st.sidebar.error("Não foi possível processar as datas")
-    data_inicio = datetime.now().date()
-    data_fim = datetime.now().date()
-
-# Filtros específicos: source, região e cidade
-filtros_aplicados = {}
-
-for filtro_name in filtros_select_names:
-    # Verificar se a coluna existe no dataset (case insensitive)
-    colunas_existentes = [col for col in dados.columns if filtro_name in col.lower()]
-    
-    if colunas_existentes:
-        coluna_filtro = colunas_existentes[0]
-        valores_unicos = ['Todos'] + sorted([str(x) for x in dados[coluna_filtro].dropna().unique()])
-        
-        filter_key = f"filter_{coluna_filtro}_key"
-        
-        # Inicializa o estado para a Selectbox (se necessário)
-        if filter_key not in st.session_state:
-            st.session_state[filter_key] = 'Todos'
-            
-        # Armazena a chave para que a função reset_filtros possa acessá-la
-        st.session_state[SPECIFIC_FILTERS_KEYS][coluna_filtro] = filter_key
-
-        # Encontra o índice do valor salvo no state
+    if tem_ponto and tem_virgula:
+        # Formato brasileiro: 1.000.000,00
+        partes = valor_str.split(',')
+        if len(partes) == 2:
+            inteiro = partes[0].replace('.', '')
+            decimal = partes[1]
+            try:
+                return float(f"{inteiro}.{decimal}")
+            except:
+                return None
+    elif tem_virgula and not tem_ponto:
+        # Formato: 1000000,00
         try:
-            indice_padrao = valores_unicos.index(st.session_state[filter_key])
-        except ValueError:
-            indice_padrao = 0
-            st.session_state[filter_key] = 'Todos'
-        
-        # Selectbox
-        st.sidebar.selectbox(
-            f"{coluna_filtro.title()}:",
-            options=valores_unicos,
-            index=indice_padrao,
-            key=filter_key
-        )
-        
-        # O valor selecionado para aplicar o filtro
-        filtros_aplicados[coluna_filtro] = st.session_state[filter_key]
+            return float(valor_str.replace(',', '.'))
+        except:
+            return None
+    elif tem_ponto and not tem_virgula:
+        # Conta quantos pontos há
+        if valor_str.count('.') == 1:
+            # Provavelmente decimal
+            try:
+                return float(valor_str)
+            except:
+                return None
+        else:
+            # Provavelmente com separadores de milhar
+            try:
+                return float(valor_str.replace('.', ''))
+            except:
+                return None
+    
+    # Última tentativa
+    import re
+    valor_limpo = re.sub(r'[^\d.,]', '', valor_str)
+    if valor_limpo:
+        valor_limpo = valor_limpo.replace(',', '.')
+        if valor_limpo.count('.') > 1:
+            partes = valor_limpo.split('.')
+            inteiro = ''.join(partes[:-1])
+            decimal = partes[-1]
+            valor_limpo = f"{inteiro}.{decimal}"
+        try:
+            return float(valor_limpo)
+        except:
+            return None
+    
+    return None
 
-# Botão Limpar Filtros
-st.sidebar.markdown("---")
-st.sidebar.button(
-    "🔄 Limpar Filtros", 
-    width='stretch', 
-    key="btn_limpar_filtros", 
-    on_click=reset_filtros
-)
-st.sidebar.markdown("---")
+# Aplica a limpeza
+dados["Valor_Tratado"] = dados[coluna_valor].apply(limpar_valor_monetario)
 
-# --- APLICAR FILTROS ---
+# Remove linhas sem valor ou data válidos
+dados_limpos = dados.dropna(subset=["Valor_Tratado", col_data]).copy()
 
-dados_filtrados = dados.copy()
+if dados_limpos.empty:
+    st.error("❌ Nenhum dado válido encontrado após limpeza dos dados.")
+    st.stop()
 
-# Filtrar por data
-if dados[coluna_data].notna().any():
-    dados_filtrados = dados_filtrados[
-        (dados_filtrados[coluna_data].dt.date >= data_inicio) & 
-        (dados_filtrados[coluna_data].dt.date <= data_fim)
-    ]
+# Adiciona colunas auxiliares
+dados_limpos["Ano"] = dados_limpos[col_data].dt.year
+dados_limpos["Mês"] = dados_limpos[col_data].dt.month
+dados_limpos["Data"] = dados_limpos[col_data].dt.date
 
-# Aplicar outros filtros específicos
-for coluna_filtro, valor_selecionado in filtros_aplicados.items():
-    if valor_selecionado != 'Todos':
-        dados_filtrados = dados_filtrados[
-            dados_filtrados[coluna_filtro].astype(str) == valor_selecionado
-        ]
+# Encontra datas mínima e máxima
+data_min = dados_limpos["Data"].min()
+data_max = dados_limpos["Data"].max()
 
-# Formatar coluna de investimento como moeda para exibição
-if coluna_investimento and coluna_investimento in dados_filtrados.columns:
-    # Criar uma cópia da coluna formatada para exibição
-    dados_filtrados_display = dados_filtrados.copy()
-    dados_filtrados_display[coluna_investimento] = dados_filtrados[coluna_investimento].apply(
-        lambda x: f"R$ {x:,.2f}" if pd.notna(x) else ""
-    )
-else:
-    dados_filtrados_display = dados_filtrados.copy()
+# ================== SIDEBAR ==================
+st.sidebar.header("Filtros")
 
-# --- LAYOUT PRINCIPAL E VISUALIZAÇÃO ---
+# BOTÃO DE LIMPAR FILTROS NO TOPO
+# Inicializa session state se não existir - AGORA NO TOPO
+if 'filtro_data_inicio' not in st.session_state:
+    st.session_state.filtro_data_inicio = data_min
+if 'filtro_data_fim' not in st.session_state:
+    st.session_state.filtro_data_fim = data_max
+if 'filtro_fonte' not in st.session_state:
+    st.session_state.filtro_fonte = "Todas"
 
-st.subheader("📈 Visão Geral")
+# Função para limpar filtros
+def limpar_filtros():
+    st.session_state.filtro_data_inicio = data_min
+    st.session_state.filtro_data_fim = data_max
+    st.session_state.filtro_fonte = "Todas"
 
-# Métricas
-col1, col2, col3, col4 = st.columns(4)
+# Botão para limpar filtros - AGORA NO TOPO
+if st.sidebar.button("🧹 Limpar todos os filtros", 
+                     type="secondary",
+                     key="botao_limpar_filtros"):
+    limpar_filtros()
+    st.rerun()
+
+st.sidebar.divider()
+
+st.sidebar.caption(f"📊 Período disponível: {data_min.strftime('%d/%m/%Y')} a {data_max.strftime('%d/%m/%Y')}")
+
+# Filtro de intervalo de datas
+st.sidebar.subheader("📅 Período")
+
+# Cria duas colunas para as datas
+col1, col2 = st.sidebar.columns(2)
 
 with col1:
-    total_registros = len(dados_filtrados)
-    st.metric("Total de Registros", total_registros)
+    data_inicio = st.date_input(
+        "Data inicial",
+        value=st.session_state.filtro_data_inicio,
+        min_value=data_min,
+        max_value=data_max,
+        key="data_inicio_input"
+    )
 
 with col2:
-    if coluna_investimento and coluna_investimento in dados_filtrados.columns:
-        total_investimento = dados_filtrados[coluna_investimento].sum()
-        if pd.notna(total_investimento):
-            st.metric("Total Investido", f"R$ {total_investimento:,.2f}")
-        else:
-            st.metric("Total Investido", "R$ 0,00")
-    else:
-        st.metric("Total Investido", "N/A")
+    data_fim = st.date_input(
+        "Data final",
+        value=st.session_state.filtro_data_fim,
+        min_value=data_min,
+        max_value=data_max,
+        key="data_fim_input"
+    )
 
-with col3:
-    if coluna_investimento and coluna_investimento in dados_filtrados.columns and len(dados_filtrados) > 0:
-        # Calcular média apenas para valores não nulos
-        valores_validos = dados_filtrados[coluna_investimento].dropna()
-        if len(valores_validos) > 0:
-            media_investimentos = valores_validos.mean()
-            st.metric("Média de Investimentos", f"R$ {media_investimentos:,.2f}")
-        else:
-            st.metric("Média de Investimentos", "R$ 0,00")
-    else:
-        st.metric("Média de Investimentos", "N/A")
+# Atualizar session state com os valores atuais
+st.session_state.filtro_data_inicio = data_inicio
+st.session_state.filtro_data_fim = data_fim
 
-with col4:
-    if len(dados_filtrados) > 0:
-        st.metric("Período", f"{data_inicio} a {data_fim}")
-    else:
-        st.metric("Período", "N/A")
+# Validação do intervalo
+if data_inicio and data_fim:
+    if data_inicio > data_fim:
+        st.sidebar.warning("⚠️ Data inicial maior que data final. Ajustando...")
+        data_inicio, data_fim = data_fim, data_inicio
+        # Atualiza session state
+        st.session_state.filtro_data_inicio = data_inicio
+        st.session_state.filtro_data_fim = data_fim
 
-st.markdown("---")
-
-# Tabela de dados
-st.subheader("📊 Dados Filtrados")
-
-if len(dados_filtrados) > 0:
-    # Mostrar dados em uma tabela com a coluna de investimento formatada
-    st.dataframe(
-        dados_filtrados_display,
-        width='stretch',
-        height=400
+# Filtro de fonte - usando dropdown simples
+if col_fonte:
+    st.sidebar.subheader("📰 Fonte")
+    fontes = sorted(dados_limpos[col_fonte].dropna().unique())
+    
+    # Adiciona opção "Todas" no início
+    opcoes_fonte = ["Todas"] + fontes
+    
+    fonte_selecionada = st.sidebar.selectbox(
+        "Selecione uma fonte",
+        opcoes_fonte,
+        index=opcoes_fonte.index(st.session_state.filtro_fonte) 
+        if st.session_state.filtro_fonte in opcoes_fonte else 0,
+        key="fonte_selectbox"
     )
     
-    # Download dos dados filtrados
-    st.markdown("---")
-    st.subheader("💾 Exportar Dados")
+    # Atualizar session state
+    st.session_state.filtro_fonte = fonte_selecionada
+
+# Mostra resumo dos filtros ativos
+st.sidebar.divider()
+st.sidebar.subheader("🔍 Filtros Ativos")
+
+filtros_ativos = []
+if data_inicio != data_min or data_fim != data_max:
+    filtros_ativos.append(f"Período: {data_inicio.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}")
+
+if col_fonte and fonte_selecionada != "Todas":
+    filtros_ativos.append(f"Fonte: {fonte_selecionada}")
+
+if not filtros_ativos:
+    st.sidebar.caption("✅ Mostrando todos os dados")
+else:
+    for filtro in filtros_ativos:
+        st.sidebar.caption(f"• {filtro}")
+
+# ================== APLICA FILTROS ==================
+df = dados_limpos.copy()
+
+# Filtro por intervalo de datas
+df = df[(df["Data"] >= data_inicio) & (df["Data"] <= data_fim)]
+
+# Filtro por fonte
+if col_fonte and fonte_selecionada != "Todas":
+    df = df[df[col_fonte] == fonte_selecionada]
+
+# ================== KPIs ==================
+total_registros = df.shape[0]
+total_investido = df["Valor_Tratado"].sum() if total_registros > 0 else 0
+valor_medio = df["Valor_Tratado"].mean() if total_registros > 0 else 0
+
+# Função para formatar valores em reais
+def formatar_reais(valor):
+    if valor >= 1_000_000_000:  # Bilhões
+        return f"R$ {valor/1_000_000_000:,.1f} bi".replace(",", "X").replace(".", ",").replace("X", ".")
+    elif valor >= 1_000_000:  # Milhões
+        return f"R$ {valor/1_000_000:,.1f} mi".replace(",", "X").replace(".", ",").replace("X", ".")
+    else:  # Milhares ou menos
+        return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+# ================== VISÃO GERAL ==================
+st.title("📊 Dashboard de Investimentos - Espírito Santo")
+
+# Mostra período filtrado
+periodo_str = ""
+if data_inicio != data_min or data_fim != data_max:
+    periodo_str = f" ({data_inicio.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')})"
+
+st.subheader(f"📈 Visão Geral{periodo_str}")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.metric(
+        "Total de Registros",
+        f"{total_registros:,}".replace(",", "."),
+        help="Número de notícias com valores monetários válidos"
+    )
+
+with col2:
+    st.metric(
+        "Total Investido",
+        formatar_reais(total_investido),
+        help="Soma de todos os valores monetários no período"
+    )
+
+with col3:
+    st.metric(
+        "Valor Médio por Registro",
+        formatar_reais(valor_medio),
+        help="Média dos valores monetários"
+    )
+
+st.divider()
+
+# ================== ANÁLISES VISUAIS ==================
+if total_registros > 0:
+    st.subheader("📊 Análises Visuais")
     
-    col1, col2 = st.columns(2)
+    # TABS para diferentes visualizações
+    tab1, tab2, tab3 = st.tabs(["📈 Evolução Temporal", "📰 Por Fonte", "🏆 Top Investimentos"])
     
-    with col1:
-        # Download como CSV (mantém os valores numéricos originais)
-        csv = dados_filtrados.to_csv(index=False, date_format='%Y-%m-%d', encoding='utf-8')
-        st.download_button(
-            label="📥 Download como CSV",
-            data=csv,
-            file_name=f"dados_filtrados_{data_inicio}_{data_fim}.csv",
-            mime="text/csv"
+    with tab1:
+        # Evolução temporal
+        if len(df["Data"].unique()) > 1:
+            # Agrupa por mês/ano
+            evolucao = df.copy()
+            evolucao["Mês-Ano"] = evolucao[col_data].dt.strftime('%m/%Y')
+            evolucao["Data_Ord"] = evolucao[col_data].dt.to_period('M')
+            
+            evolucao_agrupada = (
+                evolucao.groupby(["Data_Ord", "Mês-Ano"], as_index=False)["Valor_Tratado"]
+                .sum()
+                .sort_values("Data_Ord")
+            )
+            
+            fig_evolucao = px.line(
+                evolucao_agrupada,
+                x="Mês-Ano",
+                y="Valor_Tratado",
+                markers=True,
+                title=f"Evolução dos Investimentos{periodo_str}"
+            )
+            fig_evolucao.update_layout(
+                yaxis_title="Valor Total (R$)",
+                xaxis_title="Mês-Ano",
+                xaxis=dict(tickangle=45)
+            )
+            st.plotly_chart(fig_evolucao, width="stretch")
+        else:
+            st.info("📅 Selecione um período mais amplo para ver a evolução temporal.")
+    
+    with tab2:
+        # Por fonte
+        if col_fonte and len(df[col_fonte].unique()) > 1:
+            por_fonte = (
+                df.groupby(col_fonte, as_index=False)["Valor_Tratado"]
+                .sum()
+                .sort_values("Valor_Tratado", ascending=False)
+            )
+            
+            fig_fonte = px.bar(
+                por_fonte,
+                x=col_fonte,
+                y="Valor_Tratado",
+                title=f"Investimentos por Fonte{periodo_str}"
+            )
+            fig_fonte.update_layout(
+                yaxis_title="Valor Total (R$)",
+                xaxis_title="Fonte",
+                xaxis=dict(tickangle=45)
+            )
+            st.plotly_chart(fig_fonte, width="stretch")
+        else:
+            st.info("📰 Selecione 'Todas' nas fontes para ver a distribuição completa.")
+    
+    with tab3:
+        # Top 10 maiores investimentos
+        top_10 = df.nlargest(10, "Valor_Tratado")[["Título", col_data, col_fonte, "Valor_Tratado"]].copy()
+        top_10 = top_10.sort_values("Valor_Tratado", ascending=True)
+        
+        # Cria título abreviado para o gráfico
+        top_10["Título_Curto"] = top_10["Título"].apply(
+            lambda x: (x[:50] + "...") if len(x) > 50 else x
         )
-    
-    with col2:
-        # Download como Excel (mantém os valores numéricos originais)
-        excel_data = to_excel(dados_filtrados)
-        st.download_button(
-            label="📥 Download como Excel",
-            data=excel_data,
-            file_name=f"dados_filtrados_{data_inicio}_{data_fim}.xlsx",
-            mime="application/vnd.ms-excel"
+        
+        fig_top10 = px.bar(
+            top_10,
+            y="Título_Curto",
+            x="Valor_Tratado",
+            orientation='h',
+            title="Top 10 Maiores Investimentos",
+            hover_data=[col_fonte, col_data, "Título"]
         )
+        fig_top10.update_layout(
+            xaxis_title="Valor (R$)",
+            yaxis_title="",
+            height=500
+        )
+        st.plotly_chart(fig_top10, width="stretch")
+    
+    st.divider()
+    
+    # ================== TABELA DE REGISTROS ==================
+    st.subheader(f"📋 Registros Encontrados ({total_registros})")
+    
+    # Colunas para mostrar
+    colunas_mostrar = ["Título", "Link", col_data, col_fonte, "Valor_Tratado"]
+    colunas_mostrar = [c for c in colunas_mostrar if c in df.columns]
+    
+    # Prepara dataframe para exibição
+    df_display = df[colunas_mostrar].copy()
+    df_display = df_display.sort_values(col_data, ascending=False)
+    df_display[col_data] = df_display[col_data].dt.strftime('%d/%m/%Y')
+    df_display["Valor (R$)"] = df_display["Valor_Tratado"].apply(formatar_reais)
+    
+    # Remove coluna original
+    if "Valor_Tratado" in df_display.columns:
+        df_display = df_display.drop(columns=["Valor_Tratado"])
+    
+    # Configuração das colunas
+    column_config = {
+        "Link": st.column_config.LinkColumn("Link", display_text="🔗"),
+        "Título": st.column_config.TextColumn("Título", width="large"),
+        col_data: st.column_config.TextColumn("Data"),
+    }
+    
+    if col_fonte:
+        column_config[col_fonte] = st.column_config.TextColumn("Fonte")
+    
+    column_config["Valor (R$)"] = st.column_config.TextColumn("Valor")
+    
+    st.dataframe(
+        df_display,
+        width="stretch",
+        hide_index=True,
+        column_config=column_config
+    )
+    
+    # ================== DOWNLOAD ==================
+    st.divider()
+    st.subheader("📥 Download dos Dados")
+    
+    # Prepara dados para download
+    df_download = df.copy()
+    df_download[col_data] = df_download[col_data].dt.strftime('%d/%m/%Y')
+    df_download["Valor (R$)"] = df_download["Valor_Tratado"].apply(formatar_reais)
+    
+    if "Valor_Tratado" in df_download.columns:
+        df_download = df_download.drop(columns=["Valor_Tratado"])
+    
+    csv = df_download.to_csv(index=False, sep=';', encoding='utf-8-sig')
+    
+    st.download_button(
+        label="📥 Baixar dados em CSV",
+        data=csv,
+        file_name=f"investimentos_es_{data_inicio.strftime('%Y%m%d')}_{data_fim.strftime('%Y%m%d')}.csv",
+        mime="text/csv",
+        width="stretch"
+    )
 
 else:
-    st.warning("⚠️ Nenhum dado encontrado com os filtros selecionados.")
-    st.info("Tente ajustar os filtros para visualizar os dados.")
+    st.warning("⚠️ Nenhum registro encontrado com os filtros aplicados. Tente ajustar os filtros.")
 
-# Rodapé
-st.markdown("---")
-st.markdown(
-    "Vent Digital  •  "
-    f"Última atualização: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
-)
+# ================== INFORMAÇÕES ==================
+st.divider()
+with st.expander("ℹ️ Sobre este dashboard"):
+    st.write("""
+    **Dashboard de Investimentos - Espírito Santo**
+    
+    Este dashboard apresenta informações sobre investimentos públicos
+    no estado do Espírito Santo, extraídos de notícias oficiais.
+    
+    **Funcionalidades:**
+    - Filtragem por período de datas
+    - Filtragem por fonte/origem da notícia
+    - Visualização da evolução temporal dos investimentos
+    - Análise por fonte de informação
+    - Lista dos maiores investimentos
+    - Download dos dados filtrados
+    
+    **Fonte dos dados:** Notícias oficiais do governo do ES
+    
+    **Como usar:**
+    1. Use os seletores de data para definir o período desejado
+    2. Selecione uma fonte específica ou "Todas" para ver todas
+    3. Clique em "Limpar todos os filtros" para voltar à visualização completa
+    4. Use as abas para alternar entre diferentes visualizações
+    5. Baixe os dados filtrados em formato CSV
+    """)
