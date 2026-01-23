@@ -18,8 +18,8 @@ def carregar_dados_excel(caminho):
         st.error(f"❌ Erro ao carregar arquivo: {e}")
         st.stop()
 
-# 👉 ajuste o caminho se necessário
-CAMINHO_EXCEL = "NOTICIAS_VALORES_MONETARIOS.xlsx"
+# 👉 NOVA BASE
+CAMINHO_EXCEL = "NOTICIAS_VALORES_MONETARIOS v2.xlsx"
 dados = carregar_dados_excel(CAMINHO_EXCEL)
 
 # ================== DETECÇÃO DE COLUNAS ==================
@@ -41,6 +41,20 @@ for c in dados.columns:
         col_fonte = c
         break
 
+# Procura coluna de região
+col_regiao = None
+for c in dados.columns:
+    if "região" in c.lower() or "regiao" in c.lower():
+        col_regiao = c
+        break
+
+# Procura coluna de cidade
+col_cidade = None
+for c in dados.columns:
+    if "cidade" in c.lower() or "município" in c.lower() or "municipio" in c.lower():
+        col_cidade = c
+        break
+
 # Procura coluna de valor
 colunas_possiveis_valor = ["Valores_Monetarios", "Valores", "Valor"]
 coluna_valor = None
@@ -60,105 +74,64 @@ dados[col_data] = pd.to_datetime(dados[col_data], errors='coerce', dayfirst=True
 
 # TRATAMENTO DE VALORES MONETÁRIOS
 def limpar_valor_monetario(valor):
-    """Função robusta para limpar valores monetários"""
     if pd.isna(valor):
         return None
-    
-    # Se já for numérico (int ou float)
     if isinstance(valor, (int, float)):
         return float(valor)
-    
-    # Converte para string
+
     valor_str = str(valor).strip()
-    
-    if valor_str == '' or valor_str.lower() in ['nan', 'none', 'null']:
+    if valor_str == '':
         return None
-    
-    # Remove R$ e espaços
+
     valor_str = valor_str.replace('R$', '').replace('$', '').strip()
-    
-    # Se já estiver em formato numérico sem separadores
+
     try:
         return float(valor_str)
     except:
         pass
-    
-    # Tenta identificar o formato
-    tem_ponto = '.' in valor_str
-    tem_virgula = ',' in valor_str
-    
-    if tem_ponto and tem_virgula:
-        # Formato brasileiro: 1.000.000,00
+
+    if '.' in valor_str and ',' in valor_str:
         partes = valor_str.split(',')
-        if len(partes) == 2:
-            inteiro = partes[0].replace('.', '')
-            decimal = partes[1]
-            try:
-                return float(f"{inteiro}.{decimal}")
-            except:
-                return None
-    elif tem_virgula and not tem_ponto:
-        # Formato: 1000000,00
+        inteiro = partes[0].replace('.', '')
+        decimal = partes[1]
+        try:
+            return float(f"{inteiro}.{decimal}")
+        except:
+            return None
+
+    if ',' in valor_str and '.' not in valor_str:
         try:
             return float(valor_str.replace(',', '.'))
         except:
             return None
-    elif tem_ponto and not tem_virgula:
-        # Conta quantos pontos há
-        if valor_str.count('.') == 1:
-            # Provavelmente decimal
-            try:
-                return float(valor_str)
-            except:
-                return None
-        else:
-            # Provavelmente com separadores de milhar
-            try:
-                return float(valor_str.replace('.', ''))
-            except:
-                return None
-    
-    # Última tentativa
-    import re
-    valor_limpo = re.sub(r'[^\d.,]', '', valor_str)
-    if valor_limpo:
-        valor_limpo = valor_limpo.replace(',', '.')
-        if valor_limpo.count('.') > 1:
-            partes = valor_limpo.split('.')
-            inteiro = ''.join(partes[:-1])
-            decimal = partes[-1]
-            valor_limpo = f"{inteiro}.{decimal}"
-        try:
-            return float(valor_limpo)
-        except:
-            return None
-    
-    return None
 
-# Aplica a limpeza
+    try:
+        return float(valor_str.replace('.', ''))
+    except:
+        return None
+
+# Aplica limpeza
 dados["Valor_Tratado"] = dados[coluna_valor].apply(limpar_valor_monetario)
 
-# Remove linhas sem valor ou data válidos
+# Remove linhas inválidas
 dados_limpos = dados.dropna(subset=["Valor_Tratado", col_data]).copy()
 
 if dados_limpos.empty:
     st.error("❌ Nenhum dado válido encontrado após limpeza dos dados.")
     st.stop()
 
-# Adiciona colunas auxiliares
+# Colunas auxiliares
 dados_limpos["Ano"] = dados_limpos[col_data].dt.year
 dados_limpos["Mês"] = dados_limpos[col_data].dt.month
 dados_limpos["Data"] = dados_limpos[col_data].dt.date
 
-# Encontra datas mínima e máxima
 data_min = dados_limpos["Data"].min()
 data_max = dados_limpos["Data"].max()
 
 # ================== SIDEBAR ==================
 st.sidebar.header("Filtros")
 
-# BOTÃO DE LIMPAR FILTROS NO TOPO
-# Inicializa session state se não existir - AGORA NO TOPO
+# Session state
 if 'filtro_data_inicio' not in st.session_state:
     st.session_state.filtro_data_inicio = data_min
 if 'filtro_data_fim' not in st.session_state:
@@ -166,105 +139,85 @@ if 'filtro_data_fim' not in st.session_state:
 if 'filtro_fonte' not in st.session_state:
     st.session_state.filtro_fonte = "Todas"
 
-# Função para limpar filtros
+# Limpar filtros
 def limpar_filtros():
     st.session_state.filtro_data_inicio = data_min
     st.session_state.filtro_data_fim = data_max
     st.session_state.filtro_fonte = "Todas"
 
-# Botão para limpar filtros - AGORA NO TOPO
-if st.sidebar.button("🧹 Limpar todos os filtros", 
-                     type="secondary",
-                     key="botao_limpar_filtros"):
+if st.sidebar.button("🧹 Limpar todos os filtros", type="secondary"):
     limpar_filtros()
     st.rerun()
 
 st.sidebar.divider()
 
-st.sidebar.caption(f"📊 Período disponível: {data_min.strftime('%d/%m/%Y')} a {data_max.strftime('%d/%m/%Y')}")
-
-# Filtro de intervalo de datas
+# Período
 st.sidebar.subheader("📅 Período")
-
-# Cria duas colunas para as datas
 col1, col2 = st.sidebar.columns(2)
 
 with col1:
     data_inicio = st.date_input(
         "Data inicial",
-        value=st.session_state.filtro_data_inicio,
+        st.session_state.filtro_data_inicio,
         min_value=data_min,
-        max_value=data_max,
-        key="data_inicio_input"
+        max_value=data_max
     )
 
 with col2:
     data_fim = st.date_input(
         "Data final",
-        value=st.session_state.filtro_data_fim,
+        st.session_state.filtro_data_fim,
         min_value=data_min,
-        max_value=data_max,
-        key="data_fim_input"
+        max_value=data_max
     )
 
-# Atualizar session state com os valores atuais
 st.session_state.filtro_data_inicio = data_inicio
 st.session_state.filtro_data_fim = data_fim
 
-# Validação do intervalo
-if data_inicio and data_fim:
-    if data_inicio > data_fim:
-        st.sidebar.warning("⚠️ Data inicial maior que data final. Ajustando...")
-        data_inicio, data_fim = data_fim, data_inicio
-        # Atualiza session state
-        st.session_state.filtro_data_inicio = data_inicio
-        st.session_state.filtro_data_fim = data_fim
-
-# Filtro de fonte - usando dropdown simples
+# Fonte
 if col_fonte:
     st.sidebar.subheader("📰 Fonte")
     fontes = sorted(dados_limpos[col_fonte].dropna().unique())
-    
-    # Adiciona opção "Todas" no início
     opcoes_fonte = ["Todas"] + fontes
-    
+
     fonte_selecionada = st.sidebar.selectbox(
         "Selecione uma fonte",
         opcoes_fonte,
-        index=opcoes_fonte.index(st.session_state.filtro_fonte) 
-        if st.session_state.filtro_fonte in opcoes_fonte else 0,
-        key="fonte_selectbox"
+        index=opcoes_fonte.index(st.session_state.filtro_fonte)
+        if st.session_state.filtro_fonte in opcoes_fonte else 0
     )
-    
-    # Atualizar session state
+
     st.session_state.filtro_fonte = fonte_selecionada
 
-# Mostra resumo dos filtros ativos
-st.sidebar.divider()
-st.sidebar.subheader("🔍 Filtros Ativos")
+# Região
+if col_regiao:
+    st.sidebar.subheader("🗺️ Região")
+    regioes = sorted(dados_limpos[col_regiao].dropna().unique())
+    regioes_sel = st.sidebar.multiselect("Selecione a região", regioes, default=regioes)
 
-filtros_ativos = []
-if data_inicio != data_min or data_fim != data_max:
-    filtros_ativos.append(f"Período: {data_inicio.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}")
+# Cidade
+if col_cidade:
+    st.sidebar.subheader("🏙️ Cidade")
+    df_cidades = dados_limpos
+    if col_regiao:
+        df_cidades = df_cidades[df_cidades[col_regiao].isin(regioes_sel)]
 
-if col_fonte and fonte_selecionada != "Todas":
-    filtros_ativos.append(f"Fonte: {fonte_selecionada}")
-
-if not filtros_ativos:
-    st.sidebar.caption("✅ Mostrando todos os dados")
-else:
-    for filtro in filtros_ativos:
-        st.sidebar.caption(f"• {filtro}")
+    cidades = sorted(df_cidades[col_cidade].dropna().unique())
+    cidades_sel = st.sidebar.multiselect("Selecione a cidade", cidades, default=cidades)
 
 # ================== APLICA FILTROS ==================
 df = dados_limpos.copy()
 
-# Filtro por intervalo de datas
 df = df[(df["Data"] >= data_inicio) & (df["Data"] <= data_fim)]
 
-# Filtro por fonte
 if col_fonte and fonte_selecionada != "Todas":
     df = df[df[col_fonte] == fonte_selecionada]
+
+if col_regiao:
+    df = df[df[col_regiao].isin(regioes_sel)]
+
+if col_cidade:
+    df = df[df[col_cidade].isin(cidades_sel)]
 
 # ================== KPIs ==================
 total_registros = df.shape[0]
