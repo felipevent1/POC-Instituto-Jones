@@ -19,7 +19,7 @@ def carregar_dados_excel(caminho):
         st.stop()
 
 # 👉 NOVA BASE
-CAMINHO_EXCEL = "NOTICIAS_VALORES_MONETARIOS v2.xlsx"
+CAMINHO_EXCEL = "NOTICIAS_VALORES_MONETARIOS.xlsx"
 dados = carregar_dados_excel(CAMINHO_EXCEL)
 
 # ================== DETECÇÃO DE COLUNAS ==================
