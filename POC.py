@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import re
 
 # ================= CONFIGURAÇÃO =================
 st.set_page_config(
@@ -72,7 +73,7 @@ if coluna_valor is None:
 # TRATAMENTO DE DATAS
 dados[col_data] = pd.to_datetime(dados[col_data], errors='coerce', dayfirst=True)
 
-# TRATAMENTO DE VALORES MONETÁRIOS
+# NOVA FUNÇÃO PARA TRATAR VALORES MONETÁRIOS
 def limpar_valor_monetario(valor):
     if pd.isna(valor):
         return None
@@ -83,32 +84,73 @@ def limpar_valor_monetario(valor):
     if valor_str == '':
         return None
 
+    # Remove R$ e espaços
     valor_str = valor_str.replace('R$', '').replace('$', '').strip()
-
+    
+    # Converte para minúsculas para facilitar a análise
+    valor_lower = valor_str.lower()
+    
+    # Verifica se contém abreviações de milhões, bilhões, etc
+    multiplicador = 1.0
+    
+    # Verifica bilhões
+    if 'bi' in valor_lower or 'bilhão' in valor_lower or 'bilhoes' in valor_lower or 'bilhões' in valor_lower:
+        multiplicador = 1_000_000_000
+        # Remove o texto de bilhões
+        valor_lower = re.sub(r'[^\d.,]+', '', valor_lower)
+    # Verifica milhões
+    elif 'mi' in valor_lower or 'milhão' in valor_lower or 'milhoes' in valor_lower or 'milhões' in valor_lower:
+        multiplicador = 1_000_000
+        # Remove o texto de milhões
+        valor_lower = re.sub(r'[^\d.,]+', '', valor_lower)
+    # Verifica milhares (opcional)
+    elif 'mil' in valor_lower and 'milhão' not in valor_lower:
+        multiplicador = 1_000
+        # Remove o texto de mil
+        valor_lower = re.sub(r'[^\d.,]+', '', valor_lower)
+    
+    # Agora trabalha apenas com números, pontos e vírgulas
+    valor_numerico = valor_lower.strip()
+    
+    # Se após remover o texto não sobrou nada, usa o original (pode ser só número)
+    if valor_numerico == '':
+        valor_numerico = re.sub(r'[^\d.,]+', '', valor_str)
+    
+    # Remove pontos como separadores de milhar
+    valor_numerico = valor_numerico.replace('.', '')
+    
+    # Substitui vírgula por ponto para conversão decimal
+    valor_numerico = valor_numerico.replace(',', '.')
+    
+    # Remove quaisquer caracteres não numéricos, exceto ponto
+    valor_numerico = re.sub(r'[^\d.]+', '', valor_numerico)
+    
     try:
-        return float(valor_str)
+        # Converte para float e aplica o multiplicador
+        valor_float = float(valor_numerico) if valor_numerico else 0.0
+        return valor_float * multiplicador
     except:
-        pass
-
-    if '.' in valor_str and ',' in valor_str:
-        partes = valor_str.split(',')
-        inteiro = partes[0].replace('.', '')
-        decimal = partes[1]
+        # Tenta um método alternativo para formatos específicos
         try:
-            return float(f"{inteiro}.{decimal}")
+            # Para formatos como "100,5 milhões" -> "100.5"
+            valor_numerico = valor_str
+            # Extrai apenas números e vírgulas/pontos
+            valor_numerico = re.sub(r'[^\d,.]', '', valor_numerico)
+            # Substitui vírgula por ponto
+            valor_numerico = valor_numerico.replace(',', '.')
+            # Remove pontos extras (deixando apenas o último ponto decimal)
+            partes = valor_numerico.split('.')
+            if len(partes) > 2:
+                # Tem múltiplos pontos (provavelmente separador de milhar e decimal)
+                # Une todas as partes exceto a última como inteiro
+                inteiro = ''.join(partes[:-1])
+                decimal = partes[-1]
+                valor_numerico = f"{inteiro}.{decimal}"
+            
+            valor_float = float(valor_numerico) if valor_numerico else 0.0
+            return valor_float * multiplicador
         except:
             return None
-
-    if ',' in valor_str and '.' not in valor_str:
-        try:
-            return float(valor_str.replace(',', '.'))
-        except:
-            return None
-
-    try:
-        return float(valor_str.replace('.', ''))
-    except:
-        return None
 
 # Aplica limpeza
 dados["Valor_Tratado"] = dados[coluna_valor].apply(limpar_valor_monetario)
