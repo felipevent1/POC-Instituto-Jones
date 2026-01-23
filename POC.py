@@ -11,139 +11,64 @@ st.set_page_config(
 # ================== CARREGAMENTO ==================
 @st.cache_data
 def carregar_dados_excel(caminho):
-    try:
-        df = pd.read_excel(caminho)
-        return df
-    except Exception as e:
-        st.error(f"❌ Erro ao carregar arquivo: {e}")
-        st.stop()
+    df = pd.read_excel(caminho)
+    return df
 
-# 👉 NOVA BASE
 CAMINHO_EXCEL = "NOTICIAS_VALORES_MONETARIOS.xlsx"
 dados = carregar_dados_excel(CAMINHO_EXCEL)
 
 # ================== DETECÇÃO DE COLUNAS ==================
-# Procura coluna de data
-col_data = None
-for c in dados.columns:
-    if "data" in c.lower() or "publicacao" in c.lower():
-        col_data = c
-        break
+col_data = next((c for c in dados.columns if "data" in c.lower() or "publicacao" in c.lower()), None)
+col_fonte = next((c for c in dados.columns if "fonte" in c.lower()), None)
+col_regiao = next((c for c in dados.columns if "região" in c.lower() or "regiao" in c.lower()), None)
+col_cidade = next((c for c in dados.columns if "cidade" in c.lower() or "municipio" in c.lower()), None)
 
-if col_data is None:
-    st.error("❌ Nenhuma coluna de data encontrada.")
+coluna_valor = next((c for c in ["Valores_Monetarios", "Valores", "Valor"] if c in dados.columns), None)
+
+if not col_data or not coluna_valor:
+    st.error("❌ Colunas obrigatórias não encontradas.")
     st.stop()
 
-# Procura coluna de fonte
-col_fonte = None
-for c in dados.columns:
-    if "fonte" in c.lower():
-        col_fonte = c
-        break
+# ================== TRATAMENTO ==================
+dados[col_data] = pd.to_datetime(dados[col_data], errors="coerce", dayfirst=True)
 
-# Procura coluna de região
-col_regiao = None
-for c in dados.columns:
-    if "região" in c.lower() or "regiao" in c.lower():
-        col_regiao = c
-        break
-
-# Procura coluna de cidade
-col_cidade = None
-for c in dados.columns:
-    if "cidade" in c.lower() or "município" in c.lower() or "municipio" in c.lower():
-        col_cidade = c
-        break
-
-# Procura coluna de valor
-colunas_possiveis_valor = ["Valores_Monetarios", "Valores", "Valor"]
-coluna_valor = None
-
-for col in colunas_possiveis_valor:
-    if col in dados.columns:
-        coluna_valor = col
-        break
-
-if coluna_valor is None:
-    st.error("❌ Nenhuma coluna de valores encontrada na planilha.")
-    st.stop()
-
-# ================== TRATAMENTO DE DADOS ==================
-# TRATAMENTO DE DATAS
-dados[col_data] = pd.to_datetime(dados[col_data], errors='coerce', dayfirst=True)
-
-# TRATAMENTO DE VALORES MONETÁRIOS
-def limpar_valor_monetario(valor):
+def limpar_valor(valor):
     if pd.isna(valor):
         return None
-    if isinstance(valor, (int, float)):
+    valor = str(valor).replace("R$", "").replace("$", "").strip()
+    valor = valor.replace(".", "").replace(",", ".")
+    try:
         return float(valor)
-
-    valor_str = str(valor).strip()
-    if valor_str == '':
-        return None
-
-    valor_str = valor_str.replace('R$', '').replace('$', '').strip()
-
-    try:
-        return float(valor_str)
-    except:
-        pass
-
-    if '.' in valor_str and ',' in valor_str:
-        partes = valor_str.split(',')
-        inteiro = partes[0].replace('.', '')
-        decimal = partes[1]
-        try:
-            return float(f"{inteiro}.{decimal}")
-        except:
-            return None
-
-    if ',' in valor_str and '.' not in valor_str:
-        try:
-            return float(valor_str.replace(',', '.'))
-        except:
-            return None
-
-    try:
-        return float(valor_str.replace('.', ''))
     except:
         return None
 
-# Aplica limpeza
-dados["Valor_Tratado"] = dados[coluna_valor].apply(limpar_valor_monetario)
+dados["Valor_Tratado"] = dados[coluna_valor].apply(limpar_valor)
 
-# Remove linhas inválidas
 dados_limpos = dados.dropna(subset=["Valor_Tratado", col_data]).copy()
-
-if dados_limpos.empty:
-    st.error("❌ Nenhum dado válido encontrado após limpeza dos dados.")
-    st.stop()
-
-# Colunas auxiliares
-dados_limpos["Ano"] = dados_limpos[col_data].dt.year
-dados_limpos["Mês"] = dados_limpos[col_data].dt.month
 dados_limpos["Data"] = dados_limpos[col_data].dt.date
 
 data_min = dados_limpos["Data"].min()
 data_max = dados_limpos["Data"].max()
 
-# ================== SIDEBAR ==================
-st.sidebar.header("Filtros")
+# ================== SESSION STATE ==================
+defaults = {
+    "filtro_data_inicio": data_min,
+    "filtro_data_fim": data_max,
+    "filtro_fonte": "Todas",
+    "filtro_regiao": [],
+    "filtro_cidade": [],
+}
 
-# Session state
-if 'filtro_data_inicio' not in st.session_state:
-    st.session_state.filtro_data_inicio = data_min
-if 'filtro_data_fim' not in st.session_state:
-    st.session_state.filtro_data_fim = data_max
-if 'filtro_fonte' not in st.session_state:
-    st.session_state.filtro_fonte = "Todas"
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
-# Limpar filtros
+# ================== LIMPAR FILTROS ==================
 def limpar_filtros():
-    st.session_state.filtro_data_inicio = data_min
-    st.session_state.filtro_data_fim = data_max
-    st.session_state.filtro_fonte = "Todas"
+    for k, v in defaults.items():
+        st.session_state[k] = v
+
+st.sidebar.header("Filtros")
 
 if st.sidebar.button("🧹 Limpar todos os filtros", type="secondary"):
     limpar_filtros()
@@ -151,73 +76,77 @@ if st.sidebar.button("🧹 Limpar todos os filtros", type="secondary"):
 
 st.sidebar.divider()
 
-# Período
+# ================== FILTROS ==================
+# Datas
 st.sidebar.subheader("📅 Período")
-col1, col2 = st.sidebar.columns(2)
+st.sidebar.date_input(
+    "Data inicial",
+    min_value=data_min,
+    max_value=data_max,
+    key="filtro_data_inicio"
+)
 
-with col1:
-    data_inicio = st.date_input(
-        "Data inicial",
-        st.session_state.filtro_data_inicio,
-        min_value=data_min,
-        max_value=data_max
-    )
+st.sidebar.date_input(
+    "Data final",
+    min_value=data_min,
+    max_value=data_max,
+    key="filtro_data_fim"
+)
 
-with col2:
-    data_fim = st.date_input(
-        "Data final",
-        st.session_state.filtro_data_fim,
-        min_value=data_min,
-        max_value=data_max
-    )
-
-st.session_state.filtro_data_inicio = data_inicio
-st.session_state.filtro_data_fim = data_fim
+data_inicio = st.session_state.filtro_data_inicio
+data_fim = st.session_state.filtro_data_fim
 
 # Fonte
 if col_fonte:
     st.sidebar.subheader("📰 Fonte")
-    fontes = sorted(dados_limpos[col_fonte].dropna().unique())
-    opcoes_fonte = ["Todas"] + fontes
-
-    fonte_selecionada = st.sidebar.selectbox(
-        "Selecione uma fonte",
-        opcoes_fonte,
-        index=opcoes_fonte.index(st.session_state.filtro_fonte)
-        if st.session_state.filtro_fonte in opcoes_fonte else 0
+    fontes = ["Todas"] + sorted(dados_limpos[col_fonte].dropna().unique())
+    st.sidebar.selectbox(
+        "Selecione a fonte",
+        fontes,
+        key="filtro_fonte"
     )
-
-    st.session_state.filtro_fonte = fonte_selecionada
 
 # Região
 if col_regiao:
     st.sidebar.subheader("🗺️ Região")
     regioes = sorted(dados_limpos[col_regiao].dropna().unique())
-    regioes_sel = st.sidebar.multiselect("Selecione a região", regioes, default=regioes)
+    st.sidebar.multiselect(
+        "Selecione a região",
+        regioes,
+        default=regioes if not st.session_state.filtro_regiao else None,
+        key="filtro_regiao"
+    )
 
-# Cidade
+# Cidade (dependente da região)
 if col_cidade:
     st.sidebar.subheader("🏙️ Cidade")
-    df_cidades = dados_limpos
-    if col_regiao:
-        df_cidades = df_cidades[df_cidades[col_regiao].isin(regioes_sel)]
+    df_cidades = dados_limpos.copy()
+
+    if col_regiao and st.session_state.filtro_regiao:
+        df_cidades = df_cidades[df_cidades[col_regiao].isin(st.session_state.filtro_regiao)]
 
     cidades = sorted(df_cidades[col_cidade].dropna().unique())
-    cidades_sel = st.sidebar.multiselect("Selecione a cidade", cidades, default=cidades)
+
+    st.sidebar.multiselect(
+        "Selecione a cidade",
+        cidades,
+        default=cidades if not st.session_state.filtro_cidade else None,
+        key="filtro_cidade"
+    )
 
 # ================== APLICA FILTROS ==================
 df = dados_limpos.copy()
 
 df = df[(df["Data"] >= data_inicio) & (df["Data"] <= data_fim)]
 
-if col_fonte and fonte_selecionada != "Todas":
-    df = df[df[col_fonte] == fonte_selecionada]
+if col_fonte and st.session_state.filtro_fonte != "Todas":
+    df = df[df[col_fonte] == st.session_state.filtro_fonte]
 
-if col_regiao:
-    df = df[df[col_regiao].isin(regioes_sel)]
+if col_regiao and st.session_state.filtro_regiao:
+    df = df[df[col_regiao].isin(st.session_state.filtro_regiao)]
 
-if col_cidade:
-    df = df[df[col_cidade].isin(cidades_sel)]
+if col_cidade and st.session_state.filtro_cidade:
+    df = df[df[col_cidade].isin(st.session_state.filtro_cidade)]
 
 # ================== KPIs ==================
 total_registros = df.shape[0]
