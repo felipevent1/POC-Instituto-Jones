@@ -202,7 +202,8 @@ with col1:
         "Data inicial",
         st.session_state.filtro_data_inicio,
         min_value=data_min,
-        max_value=data_max
+        max_value=data_max,
+        format="DD/MM/YYYY"
     )
 
 with col2:
@@ -210,7 +211,8 @@ with col2:
         "Data final",
         st.session_state.filtro_data_fim,
         min_value=data_min,
-        max_value=data_max
+        max_value=data_max,
+        format="DD/MM/YYYY"
     )
 
 st.session_state.filtro_data_inicio = data_inicio
@@ -484,4 +486,5 @@ with st.expander("ℹ️ Sobre este dashboard"):
     3. Clique em "Limpar todos os filtros" para voltar à visualização completa
     4. Use as abas para alternar entre diferentes visualizações
     5. Baixe os dados filtrados em formato CSV
+
     """)
